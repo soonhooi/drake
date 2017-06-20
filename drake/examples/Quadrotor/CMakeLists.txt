@@ -1,21 +1,55 @@
-include_directories(${PROJECT_SOURCE_DIR}/core)
-include_directories(${PROJECT_SOURCE_DIR}/systems)
-include_directories(${PROJECT_SOURCE_DIR}/systems/frames)
-include_directories(${PROJECT_SOURCE_DIR}/systems/plants)
-include_directories(${PROJECT_SOURCE_DIR}/systems/plants/joints)
-include_directories(${PROJECT_SOURCE_DIR}/util)
+# Currently has alignment problems on 32 bit Windows apparently
+# due to a bug in Eigen; see issue #2106 and PR #2107.
 
-if (LCM_FOUND AND NOT WIN32)
-  include_directories(${PROJECT_SOURCE_DIR}/pod-build/lcmgen)
-  add_executable(runQuadrotorDynamics runDynamics.cpp)
-  target_link_libraries(runQuadrotorDynamics drakeRBM)
-  add_dependencies(runQuadrotorDynamics drake_lcmtypes lcmtype_agg_hpp)
-  pods_use_pkg_config_packages(runQuadrotorDynamics lcm)
-  add_test(NAME runQuadrotorDynamics COMMAND runQuadrotorDynamics WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/examples/Quadrotor)
+if(lcm_FOUND)
+  add_library_with_exports(LIB_NAME drakeQuadrotorCommon SOURCE_FILES
+      quadrotor_plant.cc)
+  target_link_libraries(drakeQuadrotorCommon
+      drakeLcmSystem
+      drakeLinearControl
+      drakeRBM)
+  drake_install_libraries(drakeQuadrotorCommon)
+  drake_install_headers(
+      quadrotor_plant.h)
+  drake_install_pkg_config_file(drake-quadrotor-common
+      TARGET drakeQuadrotorCommon
+      LIBS -ldrakeQuadrotorCommon
+      REQUIRES drake-lcm-system
+      drake-linear-controller
+      drake-lcmtypes-cpp
+      drake-rbm)
 
-  add_executable(runQuadrotorLQR runLQR.cpp)
-  target_link_libraries(runQuadrotorLQR drakeRBM)
-  add_dependencies(runQuadrotorLQR drake_lcmtypes lcmtype_agg_hpp)
-  pods_use_pkg_config_packages(runQuadrotorLQR lcm)
-  add_test(NAME runQuadrotorLQR COMMAND runQuadrotorLQR WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/examples/Quadrotor)
+  add_executable(run_quadrotor_dynamics run_quadrotor_dynamics.cc)
+  target_link_libraries(run_quadrotor_dynamics
+      drakeLcmSystem
+      drakeMultibodyParsers
+      drakeRigidBodyPlant
+      drakeSystemAnalysis
+      drakeSystemPrimitives
+      gflags)
+  drake_add_test(NAME run_quadrotor_dynamics COMMAND run_quadrotor_dynamics --duration=1.0 SIZE medium)
+
+  add_executable(run_quadrotor_lqr run_quadrotor_lqr.cc)
+  target_link_libraries(run_quadrotor_lqr
+      drakeLcmSystem
+      drakeMultibodyParsers
+      drakeQuadrotorCommon
+      drakeRigidBodyPlant
+      drakeSystemAnalysis
+      drakeSystemPrimitives
+      gflags)
+  drake_add_test(NAME run_quadrotor_lqr
+      COMMAND run_quadrotor_lqr -simulation_trials 2 -simulation_real_time_rate 0.0)
 endif()
+
+# drake_add_matlab_test(NAME examples/Quadrotor/Quadrotor.runOpenLoop COMMAND Quadrotor.runOpenLoop)  # FIXME: see #3313
+drake_add_matlab_test(NAME examples/Quadrotor/runDircol OPTIONAL bullet snopt COMMAND runDircol)
+drake_add_matlab_test(NAME examples/Quadrotor/runDircolWObs REQUIRES bullet lcm libbot snopt COMMAND runDircolWObs SIZE large)
+drake_add_matlab_test(NAME examples/Quadrotor/runLQR OPTIONAL bullet COMMAND runLQR)
+drake_add_matlab_test(NAME examples/Quadrotor/runMixedIntegerSimpleForest REQUIRES iris lcm libbot mosek yalmip OPTIONAL bullet snopt COMMAND runMixedIntegerSimpleForest SIZE large)
+
+if(BUILD_TESTING)
+  add_subdirectory(test)
+endif()
+
+add_subdirectory(crazyflie)

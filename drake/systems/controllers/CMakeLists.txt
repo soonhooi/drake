@@ -1,93 +1,111 @@
-include_directories(${PROJECT_SOURCE_DIR}/systems/robotInterfaces)
-include_directories(${PROJECT_SOURCE_DIR}/systems/trajectories)
-include_directories(${PROJECT_SOURCE_DIR}/systems/plants)
-include_directories(${PROJECT_SOURCE_DIR}/util/test)
-include_directories(${PROJECT_SOURCE_DIR}/systems/plants/joints )
 
-add_library(drakeControlUtil SHARED controlUtil.cpp)
-target_link_libraries(drakeControlUtil drakeRBM drakeUtil drakeTrajectories)
-pods_install_libraries(drakeControlUtil)
-pods_install_headers(controlUtil.h DESTINATION drake)
-pods_install_pkg_config_file(drake-control-util
+add_library_with_exports(LIB_NAME drakeLinearControl SOURCE_FILES linear_quadratic_regulator.cc)
+target_link_libraries(drakeLinearControl drakeMath drakeSystemFramework drakeSystemPrimitives)
+drake_install_libraries(drakeLinearControl)
+drake_install_headers(linear_quadratic_regulator.h)
+drake_install_pkg_config_file(drake-linear-control
+  TARGET drakeLinearControl
+  LIBS -ldrakeLinearControl)
+
+add_library_with_exports(LIB_NAME drakeZMPPlanner SOURCE_FILES zmp_planner.cc)
+target_link_libraries(drakeZMPPlanner drakeLinearControl)
+drake_install_libraries(drakeZMPPlanner)
+drake_install_headers(zmp_planner.h)
+drake_install_pkg_config_file(drake-zmp-planner
+  TARGET drakeZMPPlanner
+  LIBS -ldrakeZMPPlanner)
+
+add_library_with_exports(LIB_NAME drakeControlUtil SOURCE_FILES controlUtil.cpp)
+target_link_libraries(drakeControlUtil
+  drakeRBM
+  drakeTrajectories
+  Eigen3::Eigen)
+drake_install_libraries(drakeControlUtil)
+drake_install_headers(controlUtil.h)
+drake_install_pkg_config_file(drake-control-util
+  TARGET drakeControlUtil
   LIBS -ldrakeControlUtil
   REQUIRES
-  VERSION 0.0.1)
+    drake-rbm
+    drake-trajectories
+    eigen3)
 
-pods_find_pkg_config(gurobi)
-if (gurobi_FOUND AND LCM_FOUND)
-  include_directories (${PROJECT_SOURCE_DIR}/solvers )
-  add_library(drakeQPCommon SHARED QPCommon.cpp)
-  target_link_libraries(drakeQPCommon drakeControlUtil drakeQP drakeTrajectories drakeLCMUtil drakeSide)
-  pods_use_pkg_config_packages(drakeQPCommon lcm)
-  pods_install_libraries(drakeQPCommon)
-  pods_install_headers(QPCommon.h DESTINATION drake)
-  pods_install_pkg_config_file(drake-qp-common
+if(gurobi_FOUND AND lcm_FOUND AND yaml-cpp_FOUND)
+  add_library_with_exports(LIB_NAME drakeQPCommon SOURCE_FILES InstantaneousQPController.cpp)
+  target_link_libraries(drakeQPCommon
+      drakeControlUtil
+      drakeLCMUtil
+      drakeMultibodyParsers
+      drakeQP
+      drakeSide
+      drakeTrajectories
+      drakeYAMLUtil
+      Eigen3::Eigen
+      lcm)
+  drake_install_libraries(drakeQPCommon)
+  drake_install_headers(QPCommon.h InstantaneousQPController.h)
+  drake_install_pkg_config_file(drake-qp-common
+    TARGET drakeQPCommon
     LIBS -ldrakeQPCommon
     CFLAGS -I\${prefix}/include/lcmtypes
-    REQUIRES drake-control-util
-    VERSION 0.0.1)
-    
-  pods_find_pkg_config(bot2-lcmgl-client)
-  if (bot2-lcmgl-client_FOUND)
-    add_executable(zmpCoMObserverStateVisualizer zmpCoMObserverStateVisualizer.cpp)
-    pods_use_pkg_config_packages(zmpCoMObserverStateVisualizer lcm bot2-lcmgl-client)
-    target_link_libraries(zmpCoMObserverStateVisualizer drake_lcmtypes)
-  endif()
+    REQUIRES
+      drake-control-util
+      drake-lcm-util
+      drake-multibody-parsers
+      drake-qp
+      drake-side
+      drake-trajectories
+      drake-yaml-util
+      eigen3
+      lcm)
 endif()
 
-if (MATLAB_FOUND)
-  include_directories (${PROJECT_SOURCE_DIR}/util )
-  include_directories (${PROJECT_SOURCE_DIR}/solvers )
-  include_directories (${PROJECT_SOURCE_DIR}/solvers/qpSpline )
-  pods_find_pkg_config(gurobi)
+add_library_with_exports(LIB_NAME drakeZMPUtil SOURCE_FILES zmpUtil.cpp)
+target_link_libraries(drakeZMPUtil
+  drakeTrajectories
+  Eigen3::Eigen)
+drake_install_libraries(drakeZMPUtil)
+drake_install_headers(zmpUtil.h)
+drake_install_pkg_config_file(drake-zmp-util
+  TARGET drakeZMPUtil
+  LIBS -ldrakeZMPUtil
+  REQUIRES
+    drake-trajectories
+    eigen3)
 
-  if (gurobi_FOUND AND LCM_FOUND)
-    # NOTE: controlMexUtil.h currently includes QPCommon.h, which includes a gurobi header.
-    # drakeControlMexUtil also has LCM as a dependency.
-    # Lots of things depend on drakeControlMexUtil. We should consider reducing dependencies
+# System 2 controllers
+set(system2_sources
+  inverse_dynamics.cc
+  inverse_dynamics_controller.cc
+  pid_controlled_system.cc
+  pid_controller.cc)
+set(system2_installed_headers
+  inverse_dynamics.h
+  inverse_dynamics_controller.h
+  model_based_controller_base.h
+  pid_controlled_system.h
+  pid_controller.h
+  state_feedback_controller_base.h)
+add_library_with_exports(LIB_NAME drakeSystemControllers
+    SOURCE_FILES ${system2_sources} ${system2_installed_headers})
+target_link_libraries(drakeSystemControllers
+    drakeCommon
+    drakeMultibodyParsers
+    drakeRBM
+    drakeSystemFramework
+    drakeSystemPrimitives)
 
-    add_mex(drakeControlMexUtil SHARED controlMexUtil.cpp)
-    target_link_libraries(drakeControlMexUtil drakeRBM drakeMexUtil drakeTrajectories drakeControlUtil drakeLCMUtil)
-    pods_install_libraries(drakeControlMexUtil)
-    pods_install_headers(controlMexUtil.h DESTINATION drake)
-    pods_install_pkg_config_file(drake-control-mex-util
-      LIBS -ldrakeControlMexUtil
-      REQUIRES
-      VERSION 0.0.1)
+drake_install_headers(${system2_installed_headers})
 
-    add_mex(QPControllermex QPControllermex.cpp)
-    target_link_libraries(QPControllermex drakeQP drakeControlUtil drakeMexUtil drakeControlMexUtil)
-    pods_use_pkg_config_packages(QPControllermex gurobi)
+drake_install_libraries(drakeSystemControllers)
+drake_install_pkg_config_file(drake-system2-controllers
+    TARGET drakeSystemControllers
+    LIBS -ldrakeSystemControllers
+    REQUIRES
+      drake-rbm
+      drake-system-framework
+      drake-system-primitives)
 
-    add_mex(instantaneousQPControllermex instantaneousQPControllermex.cpp)
-    target_link_libraries(instantaneousQPControllermex drakeQP drakeControlUtil drakeQPCommon drakeMexUtil drakeSide)
-    pods_use_pkg_config_packages(instantaneousQPControllermex gurobi)
-
-    add_mex(constructQPDataPointerMex constructQPDataPointerMex.cpp)
-    target_link_libraries(constructQPDataPointerMex drakeQP drakeControlUtil drakeQPCommon drakeMexUtil drakeControlMexUtil)
-    pods_use_pkg_config_packages(constructQPDataPointerMex gurobi)
-
-    add_mex(encodeQPInputLCMMex encodeQPInputLCMMex.cpp)
-    target_link_libraries(encodeQPInputLCMMex drakeControlUtil drakeQPCommon drakeMexUtil drakeControlMexUtil)
-    pods_use_pkg_config_packages(encodeQPInputLCMMex lcm)
-    
-    macro(add_control_mex)
-      add_mex(${ARGV} ${ARGV}.cpp)
-      target_link_libraries(${ARGV} drakeControlUtil drakeMexUtil drakeRBM drakeControlMexUtil)
-    endmacro()
-    
-    add_control_mex(bodyMotionControlmex)
-  endif()
-
-  add_mex(supportDetectmex supportDetectmex.cpp)
-  target_link_libraries(supportDetectmex drakeRBM drakeControlUtil) 
-
-endif(MATLAB_FOUND)
-
-add_library(drakeZMPUtil zmpUtil.cpp)
-target_link_libraries(drakeZMPUtil drakeTrajectories)
-pods_install_libraries(drakeZMPUtil)
-pods_install_headers(zmpUtil.h DESTINATION drake)
-
-
-add_subdirectory(test)
+if(BUILD_TESTING)
+  add_subdirectory(test)
+endif()

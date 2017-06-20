@@ -1,61 +1,156 @@
+if(gurobi_FOUND)
+  add_library_with_exports(LIB_NAME drakeQP SOURCE_FILES qp.cc)
+  target_link_libraries(drakeQP
+    Eigen3::Eigen
+    gurobi)
 
-# todo: still build something useful if gurobi does not exist
-
-pods_find_pkg_config(gurobi)
-
-if (gurobi_FOUND)
-
-  add_library(drakeQP QP.cpp)
-  set_target_properties(drakeQP PROPERTIES COMPILE_FLAGS -fPIC)
-  pods_use_pkg_config_packages(drakeQP gurobi)
-
-  if (MATLAB_FOUND)
-    add_mex(fastQPmex fastQPmex.cpp)
-    target_link_libraries(fastQPmex drakeQP)
-    add_mex(gurobiQPmex gurobiQPmex.cpp)
-    target_link_libraries(gurobiQPmex drakeQP)
-  endif()
-
-  pods_install_libraries(drakeQP)
-  pods_install_headers(fastQP.h gurobiQP.h DESTINATION drake)
-  pods_install_pkg_config_file(drake-qp
+  drake_install_libraries(drakeQP)
+  drake_install_headers(fast_qp.h gurobi_qp.h)
+  drake_install_pkg_config_file(drake-qp
+    TARGET drakeQP
     LIBS -ldrakeQP
-    REQUIRES gurobi
-    VERSION 0.0.1)
-
+    REQUIRES
+      eigen3
+      gurobi)
 endif()
 
-pods_find_pkg_config(snopt_c)
-
-if(MATLAB_FOUND)
-  include_directories(${PROJECT_SOURCE_DIR}/util)
-  add_mex(lqrmex lqrmex.cpp)
-  target_link_libraries(lqrmex drakeUtil)
+set(solver_headers
+  dreal_solver.h
+  gurobi_solver.h
+  ipopt_solver.h
+  linear_system_solver.h
+  moby_lcp_solver.h
+  mosek_solver.h
+  nlopt_solver.h
+  snopt_solver.h
+  )
+set(optimization_files)
+set(optimization_requires)
+list(APPEND optimization_files
+  ${solver_headers}
+  constraint.cc
+  cost.cc
+  create_constraint.cc
+  create_cost.cc
+  decision_variable.cc
+  indeterminate.cc
+  equality_constrained_qp_solver.cc
+  linear_system_solver.cc
+  mathematical_program.cc
+  mathematical_program_solver_interface.cc
+  moby_lcp_solver.cc
+  no_dreal.cc
+  symbolic_extraction.cc
+  system_identification.cc
+  )
+if(ipopt_FOUND)
+ list(APPEND optimization_files ipopt_solver.cc)
+ list(APPEND optimization_requires ipopt)
+else()
+  list(APPEND optimization_files no_ipopt.cc)
+endif()
+if(NLopt_FOUND)
+  list(APPEND optimization_files nlopt_solver.cc)
+  list(APPEND optimization_requires nlopt)
+else()
+  list(APPEND optimization_files no_nlopt.cc)
+endif()
+if(snopt_FOUND)
+  list(APPEND optimization_files snopt_solver.cc)
+  list(APPEND optimization_requires snopt_c)
+else()
+  list(APPEND optimization_files no_snopt.cc)
+endif()
+if(mosek_FOUND)
+  list(APPEND optimization_files mosek_solver.cc)
+  list(APPEND optimization_requires mosek)
+else()
+  list(APPEND optimization_files no_mosek.cc)
+endif()
+if(gurobi_FOUND)
+  list(APPEND optimization_files gurobi_solver.cc)
+  list(APPEND optimization_requires gurobi)
+else()
+  list(APPEND optimization_files no_gurobi.cc)
 endif()
 
-if(snopt_c_FOUND AND MATLAB_FOUND)
-  add_mex(NonlinearProgramSnoptmex NonlinearProgramSnoptmex.cpp)
-  pods_use_pkg_config_packages(NonlinearProgramSnoptmex snopt_c)
-  set_target_properties(NonlinearProgramSnoptmex PROPERTIES COMPILE_FLAGS -fPIC)
+add_library_with_exports(LIB_NAME drakeOptimization SOURCE_FILES ${optimization_files})
+target_link_libraries(drakeOptimization
+  drakeCommon
+  Eigen3::Eigen)
+drake_install_headers(
+  ${solver_headers}
+  binding.h
+  constraint.h
+  cost.h
+  create_constraint.h
+  create_cost.h
+  function.h
+  mathematical_program.h
+  mathematical_program_solver_interface.h
+  decision_variable.h
+  indeterminate.h
+  symbolic_extraction.h
+  system_identification.h
+  )
+drake_install_libraries(drakeOptimization)
+drake_install_pkg_config_file(drake-optimization
+  TARGET drakeOptimization
+  LIBS -ldrakeOptimization
+  REQUIRES
+    drake-common
+    eigen3
+    ${optimization_requires})
 
-  # link against matlab's copy of the gfortran library, if possible
-  find_library(GFORTRAN_LIBRARY NAMES gfortran libgfortran
-    PATHS "${MATLAB_ROOT}/sys/os/"
-    PATH_SUFFIXES glnxa64/ maci64/ NO_DEFAULT_PATH )
-  if (NOT GFORTRAN_LIBRARY)
-    # the above does not seem work on linux out of the box, because matlab
-    # symlinks to libgfortran.so.3 but not to libgfortran.so, and cmake isn't
-    # able to find it with the default CMAKE_FIND_LIBRARY_SUFFIXES.  Instead
-    # of setting that variable, here is the annoying work-around:
-    find_file(GFORTRAN_LIBRARY NAMES libgfortran.so.3
-      PATHS "${MATLAB_ROOT}/sys/os/"
-      PATH_SUFFIXES glnxa64/ maci64/ NO_DEFAULT_PATH)
+if(ipopt_FOUND)
+  target_link_libraries(drakeOptimization ipopt)
+  # IPOPT builds its own version of BLAS during compilation, and links
+  # it into the output library.  On (at least some) ELF systems, you
+  # wind up with a symbol name collision between IPOPT's BLAS and
+  # other BLAS implementations in other dynamic libraries (MATLAB, I'm
+  # looking in your direction...)  Since the actual implementations
+  # are incompatible, this does not end well.  Linking with the
+  # -Bsymbolic flags causes the internal references to these symbols
+  # inside libdrakeOptimization to be handled at compile time, and
+  # prevents the dynamic linker from hijacking IPOPT's calls into
+  # BLAS.
+  #
+  # This should probably be a test for the GNU linker instead of a platform.
+  if(NOT APPLE)
+    set(CMAKE_SHARED_LINKER_FLAGS
+      "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-Bsymbolic -Wl,-Bsymbolic-functions")
   endif()
-
-  if (GFORTRAN_LIBRARY)
-    target_link_libraries(NonlinearProgramSnoptmex ${GFORTRAN_LIBRARY})
-  endif()
+endif()
+if(NLopt_FOUND)
+  # TODO(jamiesnape): Fix imported target upstream.
+  target_include_directories(drakeOptimization PUBLIC ${NLOPT_INCLUDE_DIRS})
+  target_link_libraries(drakeOptimization nlopt)
+endif()
+if(snopt_FOUND)
+  target_link_libraries(drakeOptimization snopt_c)
+endif()
+if(gurobi_FOUND)
+  target_link_libraries(drakeOptimization gurobi)
+endif()
+if(mosek_FOUND)
+  target_link_libraries(drakeOptimization mosek)
 endif()
 
-add_subdirectory(qpSpline)
-add_subdirectory(test)
+add_library_with_exports(LIB_NAME drakeRotationConstraint SOURCE_FILES rotation_constraint.cc)
+target_link_libraries(drakeRotationConstraint
+        drakeOptimization)
+drake_install_headers(
+        rotation_constraint.h
+)
+drake_install_pkg_config_file(drake-rotation-constraint
+        TARGET drakeRotationConstraint
+        LIBS -ldrakeRotationConstraint
+        REQUIRES
+        drake-common
+        drake-optimization)
+
+drake_install_libraries(drakeRotationConstraint)
+
+if(BUILD_TESTING)
+  add_subdirectory(test)
+endif()
